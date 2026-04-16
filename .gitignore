@@ -4,6 +4,7 @@ ckpt/
 __pycache__
 lightning_logs/
 *.ext3
+*.sif
 *.out
 **/*.egg-info/
 logs
@@ -12,3 +13,5 @@ logs
 .idea
 .DS_Store
 *.ply
+.env
+*.obj
