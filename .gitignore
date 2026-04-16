@@ -16,4 +16,6 @@ logs
 .env
 **/*.obj
 gallery/*
-gallary/*
+*.ckpt
+*.hdf5
+data/*
