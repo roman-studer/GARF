@@ -140,6 +140,7 @@ class BreakingBadDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             persistent_workers=False,
+            collate_fn=self.dataset_cls.collate_fn,
         )
 
     def val_dataloader(self):
@@ -148,9 +149,13 @@ class BreakingBadDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             persistent_workers=False,
+            collate_fn=self.dataset_cls.collate_fn,
         )
 
     def test_dataloader(self):
         return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, collate_fn=BreakingBadWeighted.collate_fn
+            self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            collate_fn=self.dataset_cls.collate_fn,
         )

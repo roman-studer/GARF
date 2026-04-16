@@ -1,19 +1,30 @@
-EXPERIMENT_NAME="everyday_vol_one_step_init"
-DATA_ROOT="../breaking_bad_vol.hdf5"
-DATA_CATEGORIES="['everyday']"
-CHECKPOINT_PATH="output/GARF.ckpt"
+if [ -x ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+else
+    PYTHON="python3"
+fi
 
-HYDRA_FULL_ERROR=1 python eval.py \
+EXPERIMENT_NAME="radii_one_step_init"
+DATA_ROOT="data/radii/radii.hdf5"
+DATA_CATEGORIES="['radii']"
+CHECKPOINT_PATH="models/GARF_mini.ckpt"
+# With batch_size=1, this is the number of validation samples to evaluate.
+NUM_VAL_SAMPLES=3
+
+HYDRA_FULL_ERROR=1 "$PYTHON" eval.py \
     seed=42 \
     experiment=denoiser_flow_matching \
-    experiment_name=$EVAL_NAME \
+    experiment_name=$EXPERIMENT_NAME \
     loggers=csv \
     loggers.csv.save_dir=logs/GARF \
     trainer.num_nodes=1 \
     trainer.devices=[0] \
+    +trainer.limit_test_batches=$NUM_VAL_SAMPLES \
     data.data_root=$DATA_ROOT \
     data.categories=$DATA_CATEGORIES \
-    data.batch_size=64 \
+    data.batch_size=1 \
     ckpt_path=$CHECKPOINT_PATH \
     ++data.random_anchor=false \
     ++model.inference_config.one_step_init=true

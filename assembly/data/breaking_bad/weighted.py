@@ -160,7 +160,7 @@ class BreakingBadWeighted(BreakingBadBase):
                 )
                 ref_part[more_ref_part_idx] = True
 
-        return {
+        transformed = {
             "index": data["index"],
             "name": data["name"],
             "num_parts": num_parts,
@@ -182,8 +182,12 @@ class BreakingBadWeighted(BreakingBadBase):
             "redundant_pieces": data["redundant_pieces"],
             "pieces": data["pieces"],
             "mesh_scale": data["mesh_scale"],
-            "meshes": data["meshes"],
         }
+
+        if "meshes" in data:
+            transformed["meshes"] = data["meshes"]
+
+        return transformed
 
 if __name__ == "__main__":
     dataset = BreakingBadWeighted(

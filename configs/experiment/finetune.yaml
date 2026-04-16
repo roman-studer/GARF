@@ -4,20 +4,21 @@ defaults:
   - denoiser_flow_matching
   - _self_
 
-experiment_name: finetune_${now:%Y-%m-%d_%H-%M-%S}
-tags: ["finetune"]
+experiment_name: finetune_radii_${now:%Y-%m-%d_%H-%M-%S}
+tags: ["finetune", "radii"]
 
 data:
-  data_root: /scratch/zj2631/data/pastlife_synthetic.hdf5
-  categories: egg
-  multi_ref: false
-  batch_size: 32
+  data_root: ./data/radii/radii.hdf5
+  categories: ["radii"]
+  multi_ref: true
+  batch_size: 4
 
 trainer:
-  max_epochs: 500
+  max_epochs: 200
   check_val_every_n_epoch: 10
   log_every_n_steps: 1
   accumulate_grad_batches: 2
+  num_sanity_val_steps: 0
 
 model:
   lora_config:
@@ -28,6 +29,6 @@ model:
     target_modules: "transformer_layers\\.\\d+\\.(self_attn_to_qkv|self_attn_to_out\\.0|global_attn_to_qkv|global_attn_to_out\\.0|ff\\.net\\.2|norm\\.d+\\.(linear|timestep_embbedder\\.(linear_1|linear_2)))"
     modules_to_save: ["mlp_out_trans", "mlp_out_rot", "shape_embedding"]
 
-ckpt_path: output/FINAL_FM_E_SO3_MULTI_REF_VANILLA/last.ckpt
+ckpt_path: ./models/GARF_mini.ckpt
 finetuning: true
-project_name: 3D Assembly Finetune
+project_name: GARF

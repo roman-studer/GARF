@@ -1,17 +1,34 @@
 import os
-import trimesh
+import sys
+
+
+def _ensure_repo_python():
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    venv_python = os.path.join(repo_root, ".venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        return
+    current_python = os.path.abspath(sys.executable)
+    if current_python == os.path.abspath(venv_python):
+        return
+    os.execv(venv_python, [venv_python, os.path.abspath(__file__), *sys.argv[1:]])
+
+
+_ensure_repo_python()
+
 import numpy as np
 import h5py
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 from typing import List
 from scipy.sparse.csgraph import connected_components
+import trimesh
 
-CATEGORIES = ["everyday", "artifact"]
+CATEGORIES = ["radii"]
 SPLITS = ["train", "val"]
-BASE_PATH = "./breaking_bad"
-SPLITS_PATH = "./data_split"
-OUTPUT_PATH = "./breaking_bad_vol.hdf5"
+BASE_PATH = "./data/radii/radii"
+SPLITS_PATH = "./data/radii/radii/data_split"
+OUTPUT_PATH = "./data/radii/radii.hdf5"
+MESH_EXTENSIONS = (".obj", ".ply")
 
 
 def read_data_list():
@@ -31,9 +48,9 @@ def read_data_list():
                     print(f"Missing {obj_path}")
                     continue
                 fractures = os.listdir(obj_path)
-                # if fractures are all files ending with .obj and .ply
+                # If the directory directly contains mesh pieces, no need to dig deeper.
                 # no need to dig deeper
-                if all([x.endswith(".obj") or x.endswith(".ply") for x in fractures]):
+                if fractures and all(x.endswith(MESH_EXTENSIONS) for x in fractures):
                     data_list[category][split].append(line)
                     continue
                 fractures = filter(
@@ -132,16 +149,19 @@ def get_graph(
 
 def process_obj(name: str):
     obj_path = os.path.join(BASE_PATH, name)
-    pieces = os.listdir(obj_path)
-    pieces = filter(lambda x: x.endswith(".ply"), pieces)
-    pieces_names = [piece[:-4] for piece in pieces]
+    pieces = sorted(
+        piece for piece in os.listdir(obj_path) if piece.endswith(MESH_EXTENSIONS)
+    )
+    if not pieces:
+        print(f"Skipping {name}: no mesh files found in {obj_path}")
+        return name, None
+
+    pieces_names = [os.path.splitext(piece)[0] for piece in pieces]
     try:
-        meshes = [
-            trimesh.load(os.path.join(obj_path, name + ".ply")) for name in pieces_names
-        ]
+        meshes = [trimesh.load(os.path.join(obj_path, piece)) for piece in pieces]
     except Exception as e:
         print(f"Error loading {name}: {e}")
-        return name, dict()
+        return name, None
     volumes = [mesh.volume for mesh in meshes]
 
     # largest to smallest
@@ -180,9 +200,6 @@ def process_obj(name: str):
         result["pieces"][piece_idx]["faces"] = mesh.faces
         result["pieces"][piece_idx]["shared_faces"] = shared_faces[piece_idx]
 
-    if len(result) == 0:
-        print(f"Skipping {name}")
-
     return name, result
 
 
@@ -205,6 +222,8 @@ def main_process():
         pool.map(process_obj, flattened_data_list),
         total=len(flattened_data_list),
     ):
+        if result is None:
+            continue
         # skip if name already exists
         if name in h5_file:
             continue
@@ -227,5 +246,5 @@ def main_process():
 
     h5_file.close()
 
-
-main_process()
+if __name__ == "__main__":
+    main_process()

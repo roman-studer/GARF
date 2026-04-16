@@ -2,14 +2,14 @@ learning_rate_monitor:
   _target_: lightning.pytorch.callbacks.LearningRateMonitor
   logging_interval: epoch
 
-model_checkpoint:
-  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+checkpointing:
+  _target_: assembly.callbacks.EpochCheckpointingCallback
   dirpath: ./output/${experiment_name}
-  filename: "epoch-{epoch}"
-  auto_insert_metric_name: False
-  save_last: True
-  save_top_k: -1
-  save_on_train_epoch_end: False
+  monitor_candidates:
+    - eval/part_acc
+    - val/loss
+  every_n_epochs: 50
+  save_weights_only: False
 
 model_summary:
   _target_: lightning.pytorch.callbacks.RichModelSummary

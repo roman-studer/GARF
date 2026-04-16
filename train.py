@@ -39,7 +39,12 @@ def main(cfg: DictConfig):
     ]
 
     if cfg.get("ckpt_path") and cfg.get("finetuning"):
-        state_dict = torch.load(cfg.get("ckpt_path"), map_location="cpu")["state_dict"]
+        # Finetuning starts from a full training checkpoint, not a weights-only export.
+        state_dict = torch.load(
+            cfg.get("ckpt_path"),
+            map_location="cpu",
+            weights_only=False,
+        )["state_dict"]
         model.load_state_dict(state_dict)
         model.enable_lora()
 
