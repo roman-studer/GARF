@@ -13,9 +13,11 @@ hparams=""
 experiment=""
 params=""
 cv=0
-GITLAB_REGISTRY="cr.gitlab.fhnw.ch/i4ds/wristfracture:latest"
+GITLAB_REGISTRY_HOST="cr.gitlab.fhnw.ch"
+GITLAB_REGISTRY="${GITLAB_REGISTRY_HOST}/i4ds/wristfracture:latest"
 SIF_FILE="wristfracture_latest.sif"
 REGISTRY_AUTH_URL="https://gitlab.fhnw.ch/jwt/auth?service=container_registry&scope=repository:i4ds/wristfracture:pull"
+AUTH_FILE=""
 
 log_section() {
     echo
@@ -38,7 +40,9 @@ trim_cr() {
 }
 
 cleanup() {
-    rm -f "${HOME}/.docker/config.json"
+    if [ -n "${AUTH_FILE}" ]; then
+        rm -f "${AUTH_FILE}"
+    fi
 }
 
 trap cleanup EXIT
@@ -61,6 +65,7 @@ echo "Started at: $(date -Is)"
 require_cmd git
 require_cmd singularity
 require_cmd base64
+require_cmd mktemp
 
 echo "Pulling latest version of repository"
 cd /cluster/group/wristfractures/GARF/ || exit
@@ -90,12 +95,14 @@ GITLAB_USERNAME="$(trim_cr "${GITLAB_USERNAME:-}")"
 GITLAB_TOKEN="$(trim_cr "${GITLAB_TOKEN:-}")"
 GITLAB_PASSWORD="$(trim_cr "${GITLAB_PASSWORD:-}")"
 
+if [ -z "$GITLAB_TOKEN" ] && [ -n "$GITLAB_PASSWORD" ]; then
+    GITLAB_TOKEN="$GITLAB_PASSWORD"
+    echo "Notice: GITLAB_TOKEN is not set; using GITLAB_PASSWORD as the registry token/password."
+fi
+
 # Check if credentials are loaded
 if [ -z "$GITLAB_USERNAME" ] || [ -z "$GITLAB_TOKEN" ]; then
-    echo "Error: GITLAB_USERNAME or GITLAB_TOKEN not set in .env file"
-    if [ -n "$GITLAB_PASSWORD" ]; then
-        echo "Warning: GITLAB_PASSWORD is set, but run_experiment.sh authenticates with GITLAB_TOKEN."
-    fi
+    echo "Error: GITLAB_USERNAME and either GITLAB_TOKEN or GITLAB_PASSWORD must be set in .env"
     exit 1
 fi
 
@@ -103,7 +110,7 @@ log_section "Credential diagnostics"
 echo "Registry image: ${GITLAB_REGISTRY}"
 echo "Singularity version: $(singularity --version 2>/dev/null || echo 'unknown')"
 echo "GITLAB_USERNAME length: ${#GITLAB_USERNAME}"
-echo "GITLAB_TOKEN length: ${#GITLAB_TOKEN}"
+echo "Registry token/password length: ${#GITLAB_TOKEN}"
 
 if [[ "$GITLAB_USERNAME" =~ [[:space:]] ]]; then
     echo "Warning: GITLAB_USERNAME contains whitespace."
@@ -148,32 +155,36 @@ else
     echo "curl not found; skipping registry auth preflight."
 fi
 
-# Create Docker authentication configuration
-echo "Setting up Docker authentication"
-mkdir -p ~/.docker
+# Create Docker authentication configuration for this job only.
+echo "Setting up Singularity registry authentication"
+AUTH_FILE="$(mktemp "${TMPDIR:-/tmp}/garf_singularity_auth.XXXXXX.json")"
 docker_auth="$(printf '%s' "${GITLAB_USERNAME}:${GITLAB_TOKEN}" | base64 | tr -d '\n')"
-cat > ~/.docker/config.json << EOF
+cat > "${AUTH_FILE}" << EOF
 {
     "auths": {
-        "cr.gitlab.fhnw.ch": {
+        "${GITLAB_REGISTRY_HOST}": {
             "auth": "${docker_auth}"
         }
     }
 }
 EOF
-chmod 600 ~/.docker/config.json
-echo "Docker auth config written to ${HOME}/.docker/config.json"
+chmod 600 "${AUTH_FILE}"
+echo "Singularity authfile written to ${AUTH_FILE}"
 echo "Docker auth payload length: ${#docker_auth}"
 
 echo "Pulling container image from GitLab registry"
-SINGULARITY_DOCKER_USERNAME=${GITLAB_USERNAME} SINGULARITY_DOCKER_PASSWORD=${GITLAB_TOKEN} \
-singularity pull --force ${SIF_FILE} docker://${GITLAB_REGISTRY}
+SINGULARITY_AUTHFILE="${AUTH_FILE}" \
+SINGULARITY_DOCKER_USERNAME="${GITLAB_USERNAME}" \
+SINGULARITY_DOCKER_PASSWORD="${GITLAB_TOKEN}" \
+singularity pull --authfile "${AUTH_FILE}" --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
 pull_status=$?
 if [ ${pull_status} -ne 0 ]; then
     echo "Initial singularity pull failed with exit code ${pull_status}."
     echo "Retrying with 'singularity -d pull' for additional diagnostics."
-    SINGULARITY_DOCKER_USERNAME=${GITLAB_USERNAME} SINGULARITY_DOCKER_PASSWORD=${GITLAB_TOKEN} \
-    singularity -d pull --force ${SIF_FILE} docker://${GITLAB_REGISTRY}
+    SINGULARITY_AUTHFILE="${AUTH_FILE}" \
+    SINGULARITY_DOCKER_USERNAME="${GITLAB_USERNAME}" \
+    SINGULARITY_DOCKER_PASSWORD="${GITLAB_TOKEN}" \
+    singularity -d pull --authfile "${AUTH_FILE}" --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
     debug_pull_status=$?
     echo "Debug pull exit code: ${debug_pull_status}"
     echo "Failed to pull image from registry. Common causes: invalid token, missing read_registry scope, wrong username for the token type, or no access to ${GITLAB_REGISTRY}."
