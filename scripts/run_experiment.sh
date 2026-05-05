@@ -13,11 +13,9 @@ hparams=""
 experiment=""
 params=""
 cv=0
-GITLAB_REGISTRY_HOST="cr.gitlab.fhnw.ch"
-GITLAB_REGISTRY="${GITLAB_REGISTRY_HOST}/i4ds/wristfracture:latest"
+GITLAB_REGISTRY="cr.gitlab.fhnw.ch/i4ds/wristfracture:latest"
 SIF_FILE="wristfracture_latest.sif"
-REGISTRY_AUTH_URL="https://gitlab.fhnw.ch/jwt/auth?service=container_registry&scope=repository:i4ds/wristfracture:pull"
-AUTH_FILE=""
+REGISTRY_AUTH_URL="https://gitlab.fhnw.ch/jwt/auth?service=container_registry&scope=repository=i4ds/wristfracture:pull"
 
 log_section() {
     echo
@@ -40,9 +38,7 @@ trim_cr() {
 }
 
 cleanup() {
-    if [ -n "${AUTH_FILE}" ]; then
-        rm -f "${AUTH_FILE}"
-    fi
+    rm -f "${HOME}/.docker/config.json"
 }
 
 trap cleanup EXIT
@@ -65,7 +61,6 @@ echo "Started at: $(date -Is)"
 require_cmd git
 require_cmd singularity
 require_cmd base64
-require_cmd mktemp
 
 echo "Pulling latest version of repository"
 cd /cluster/group/wristfractures/GARF/ || exit
@@ -156,35 +151,33 @@ else
 fi
 
 # Create Docker authentication configuration for this job only.
-echo "Setting up Singularity registry authentication"
-AUTH_FILE="$(mktemp "${TMPDIR:-/tmp}/garf_singularity_auth.XXXXXX.json")"
+echo "Setting up Docker authentication"
+mkdir -p "${HOME}/.docker"
 docker_auth="$(printf '%s' "${GITLAB_USERNAME}:${GITLAB_TOKEN}" | base64 | tr -d '\n')"
-cat > "${AUTH_FILE}" << EOF
+cat > "${HOME}/.docker/config.json" << EOF
 {
     "auths": {
-        "${GITLAB_REGISTRY_HOST}": {
+        "cr.gitlab.fhnw.ch": {
             "auth": "${docker_auth}"
         }
     }
 }
 EOF
-chmod 600 "${AUTH_FILE}"
-echo "Singularity authfile written to ${AUTH_FILE}"
+chmod 600 "${HOME}/.docker/config.json"
+echo "Docker auth config written to ${HOME}/.docker/config.json"
 echo "Docker auth payload length: ${#docker_auth}"
 
 echo "Pulling container image from GitLab registry"
-SINGULARITY_AUTHFILE="${AUTH_FILE}" \
 SINGULARITY_DOCKER_USERNAME="${GITLAB_USERNAME}" \
 SINGULARITY_DOCKER_PASSWORD="${GITLAB_TOKEN}" \
-singularity pull --authfile "${AUTH_FILE}" --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
+singularity pull --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
 pull_status=$?
 if [ ${pull_status} -ne 0 ]; then
     echo "Initial singularity pull failed with exit code ${pull_status}."
     echo "Retrying with 'singularity -d pull' for additional diagnostics."
-    SINGULARITY_AUTHFILE="${AUTH_FILE}" \
     SINGULARITY_DOCKER_USERNAME="${GITLAB_USERNAME}" \
     SINGULARITY_DOCKER_PASSWORD="${GITLAB_TOKEN}" \
-    singularity -d pull --authfile "${AUTH_FILE}" --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
+    singularity -d pull --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
     debug_pull_status=$?
     echo "Debug pull exit code: ${debug_pull_status}"
     echo "Failed to pull image from registry. Common causes: invalid token, missing read_registry scope, wrong username for the token type, or no access to ${GITLAB_REGISTRY}."
