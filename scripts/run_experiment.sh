@@ -15,7 +15,7 @@ params=""
 cv=0
 GITLAB_REGISTRY="cr.gitlab.fhnw.ch/i4ds/wristfracture:latest"
 SIF_FILE="wristfracture_latest.sif"
-REGISTRY_AUTH_URL="https://gitlab.fhnw.ch/jwt/auth?service=container_registry&scope=repository=i4ds/wristfracture:pull"
+REGISTRY_AUTH_URL="https://gitlab.fhnw.ch/jwt/auth?service=container_registry&scope=repository:i4ds/wristfracture:pull"
 
 log_section() {
     echo
