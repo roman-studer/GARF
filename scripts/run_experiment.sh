@@ -194,11 +194,13 @@ SINGULARITYENV_LANG=C.UTF-8 \
 singularity exec --bind /lib:/host_lib --bind /lib64:/host_lib64 --env LD_LIBRARY_PATH=/host_lib:/host_lib64:$LD_LIBRARY_PATH \
 -B /cluster/group/wristfractures/GARF:/workspace \
 --nv ./${SIF_FILE} \
-bash -c "cd /workspace && python3 -m pip install -r requirements.txt && \
+bash -c "cd /workspace && \
+command -v uv >/dev/null 2>&1 || { echo 'Error: uv is required to install dependencies from uv.lock' >&2; exit 1; } && \
+uv sync --locked --extra post --no-dev && \
 if [ -z "$hparams" ]
 then
-    python3 src/train.py experiment=$experiment data.cfg.cv_fold=$cv $params
+    .venv/bin/python src/train.py experiment=$experiment data.cfg.cv_fold=$cv $params
 else
-    python3 src/train.py hparams_search=$hparams experiment=$experiment data.cfg.cv_fold=$cv $params
+    .venv/bin/python src/train.py hparams_search=$hparams experiment=$experiment data.cfg.cv_fold=$cv $params
 fi"
 echo "Training finished"
