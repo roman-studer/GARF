@@ -13,6 +13,7 @@ hparams=""
 experiment=""
 params=""
 cv=0
+
 GITLAB_REGISTRY="cr.gitlab.fhnw.ch/i4ds/wristfracture:latest"
 SIF_FILE="wristfracture_latest.sif"
 REGISTRY_AUTH_URL="https://gitlab.fhnw.ch/jwt/auth?service=container_registry&scope=repository:i4ds/wristfracture:pull"
@@ -50,6 +51,9 @@ do
         h) hparams=${OPTARG};;
         p) params=${OPTARG};;
         c) cv=${OPTARG};;
+        *)
+            fail "Invalid option. Usage: sbatch $0 -e EXPERIMENT [-h HPARAMS] [-p PARAMS] [-c CV]"
+            ;;
     esac
 done
 
@@ -57,33 +61,39 @@ log_section "Job context"
 echo "Host: $(hostname)"
 echo "User: $(whoami)"
 echo "Started at: $(date -Is)"
+echo "Experiment: ${experiment}"
+echo "Hparams: ${hparams}"
+echo "Params: ${params}"
+echo "CV fold: ${cv}"
 
 require_cmd git
 require_cmd singularity
 require_cmd base64
 
-echo "Pulling latest version of repository"
-cd /cluster/group/wristfractures/GARF/ || exit
+log_section "Repository update"
+cd /cluster/group/wristfractures/GARF/ || fail "Could not cd into repository directory"
 echo "Repository directory: $(pwd)"
+
 git status
 git fetch
 git pull
 echo "Pull successful"
 
-# Load credentials from .env file
+log_section "Credential loading"
+
 if [ -f .env ]; then
-    log_section "Credential loading"
     echo "Loading credentials from $(pwd)/.env"
     echo "Credential entries found in .env:"
     grep -nE '^(GITLAB_USERNAME|GITLAB_TOKEN|GITLAB_PASSWORD)=' .env | sed -E 's/=(.*)$/=<redacted>/' || true
+
     if LC_ALL=C grep -q $'\r' .env; then
-        echo "Warning: .env contains CRLF line endings. The script will trim trailing carriage returns from loaded credentials."
+        echo "Warning: .env contains CRLF line endings. Credentials will be trimmed."
     fi
+
     # shellcheck disable=SC1091
     source .env
 else
-    echo "Error: .env file not found. Please create a .env file with GITLAB_USERNAME and GITLAB_TOKEN"
-    exit 1
+    fail ".env file not found. Create one with GITLAB_USERNAME and GITLAB_TOKEN"
 fi
 
 GITLAB_USERNAME="$(trim_cr "${GITLAB_USERNAME:-}")"
@@ -92,13 +102,11 @@ GITLAB_PASSWORD="$(trim_cr "${GITLAB_PASSWORD:-}")"
 
 if [ -z "$GITLAB_TOKEN" ] && [ -n "$GITLAB_PASSWORD" ]; then
     GITLAB_TOKEN="$GITLAB_PASSWORD"
-    echo "Notice: GITLAB_TOKEN is not set; using GITLAB_PASSWORD as the registry token/password."
+    echo "Notice: GITLAB_TOKEN is not set; using GITLAB_PASSWORD as registry token/password."
 fi
 
-# Check if credentials are loaded
 if [ -z "$GITLAB_USERNAME" ] || [ -z "$GITLAB_TOKEN" ]; then
-    echo "Error: GITLAB_USERNAME and either GITLAB_TOKEN or GITLAB_PASSWORD must be set in .env"
-    exit 1
+    fail "GITLAB_USERNAME and either GITLAB_TOKEN or GITLAB_PASSWORD must be set in .env"
 fi
 
 log_section "Credential diagnostics"
@@ -116,9 +124,9 @@ if [[ "$GITLAB_TOKEN" =~ [[:space:]] ]]; then
 fi
 
 if [[ "$GITLAB_TOKEN" == glpat-* ]]; then
-    echo "Token prefix indicates a personal access token. Ensure it has read_registry and that GITLAB_USERNAME is your GitLab username."
+    echo "Token looks like a personal access token. Ensure it has read_registry scope."
 else
-    echo "Token does not start with glpat-. If this is a deploy, project, or group token, GITLAB_USERNAME must be the token-specific username."
+    echo "Token does not start with glpat-. If this is a deploy/project/group token, use its token-specific username."
 fi
 
 if [ -n "$GITLAB_PASSWORD" ] && [ "$GITLAB_PASSWORD" != "$GITLAB_TOKEN" ]; then
@@ -126,34 +134,42 @@ if [ -n "$GITLAB_PASSWORD" ] && [ "$GITLAB_PASSWORD" != "$GITLAB_TOKEN" ]; then
 fi
 
 log_section "Registry auth preflight"
+
 if command -v curl >/dev/null 2>&1; then
     auth_probe="$(curl -sS -u "${GITLAB_USERNAME}:${GITLAB_TOKEN}" -w '\nHTTP_STATUS:%{http_code}' "${REGISTRY_AUTH_URL}" 2>&1)"
     auth_probe_status=$?
+
     if [ ${auth_probe_status} -ne 0 ]; then
-        echo "Registry auth probe failed to execute (curl exit ${auth_probe_status})."
+        echo "Registry auth probe failed to execute. curl exit code: ${auth_probe_status}"
         echo "${auth_probe}"
     else
         auth_http_status="${auth_probe##*HTTP_STATUS:}"
         auth_body="${auth_probe%HTTP_STATUS:*}"
         auth_body="${auth_body%$'\n'}"
+
         echo "Registry auth HTTP status: ${auth_http_status}"
+
         if [[ "${auth_body}" == *'"token"'* ]]; then
             echo "Registry auth probe returned a JWT token."
         else
             echo "Registry auth response body: ${auth_body}"
         fi
+
         if [ "${auth_http_status}" != "200" ]; then
-            echo "Warning: registry auth preflight failed. Likely causes are wrong credentials, missing read_registry scope, wrong username for the token type, or missing access to ${GITLAB_REGISTRY}."
+            echo "Warning: registry auth preflight failed."
+            echo "Likely causes: wrong credentials, missing read_registry scope, wrong username for token type, or no image access."
         fi
     fi
 else
     echo "curl not found; skipping registry auth preflight."
 fi
 
-# Create Docker authentication configuration for this job only.
-echo "Setting up Docker authentication"
+log_section "Docker auth setup"
+
 mkdir -p "${HOME}/.docker"
+
 docker_auth="$(printf '%s' "${GITLAB_USERNAME}:${GITLAB_TOKEN}" | base64 | tr -d '\n')"
+
 cat > "${HOME}/.docker/config.json" << EOF
 {
     "auths": {
@@ -163,44 +179,115 @@ cat > "${HOME}/.docker/config.json" << EOF
     }
 }
 EOF
+
 chmod 600 "${HOME}/.docker/config.json"
+
 echo "Docker auth config written to ${HOME}/.docker/config.json"
 echo "Docker auth payload length: ${#docker_auth}"
 
+log_section "Container pull"
+
 echo "Pulling container image from GitLab registry"
+
 SINGULARITY_DOCKER_USERNAME="${GITLAB_USERNAME}" \
 SINGULARITY_DOCKER_PASSWORD="${GITLAB_TOKEN}" \
 singularity pull --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
+
 pull_status=$?
+
 if [ ${pull_status} -ne 0 ]; then
     echo "Initial singularity pull failed with exit code ${pull_status}."
-    echo "Retrying with 'singularity -d pull' for additional diagnostics."
+    echo "Retrying with singularity debug output."
+
     SINGULARITY_DOCKER_USERNAME="${GITLAB_USERNAME}" \
     SINGULARITY_DOCKER_PASSWORD="${GITLAB_TOKEN}" \
     singularity -d pull --force "${SIF_FILE}" "docker://${GITLAB_REGISTRY}"
+
     debug_pull_status=$?
     echo "Debug pull exit code: ${debug_pull_status}"
-    echo "Failed to pull image from registry. Common causes: invalid token, missing read_registry scope, wrong username for the token type, or no access to ${GITLAB_REGISTRY}."
-    exit 1
+
+    fail "Failed to pull image from registry."
 fi
+
 echo "Image pull successful"
 
-echo "in dir is $in_dir"
-echo "out dir is $out_dir"
+log_section "Training"
 
-echo "Starting preprocessing pipe"
+echo "Starting preprocessing/training pipeline"
+echo "SIF file: ${SIF_FILE}"
+
 SINGULARITYENV_LC_ALL=C.UTF-8 \
 SINGULARITYENV_LANG=C.UTF-8 \
-singularity exec --bind /lib:/host_lib --bind /lib64:/host_lib64 --env LD_LIBRARY_PATH=/host_lib:/host_lib64:$LD_LIBRARY_PATH \
--B /cluster/group/wristfractures/GARF:/workspace \
---nv ./${SIF_FILE} \
-bash -c "cd /workspace && \
-command -v uv >/dev/null 2>&1 || { echo 'Error: uv is required to install dependencies from uv.lock' >&2; exit 1; } && \
-uv sync --locked --extra post --no-dev && \
-if [ -z "$hparams" ]
-then
-    .venv/bin/python src/train.py experiment=$experiment data.cfg.cv_fold=$cv $params
-else
-    .venv/bin/python src/train.py hparams_search=$hparams experiment=$experiment data.cfg.cv_fold=$cv $params
-fi"
+SINGULARITYENV_HPARAMS="${hparams}" \
+SINGULARITYENV_EXPERIMENT="${experiment}" \
+SINGULARITYENV_PARAMS="${params}" \
+SINGULARITYENV_CV="${cv}" \
+singularity exec \
+    --bind /lib:/host_lib \
+    --bind /lib64:/host_lib64 \
+    --env LD_LIBRARY_PATH="/host_lib:/host_lib64:${LD_LIBRARY_PATH}" \
+    -B /cluster/group/wristfractures/GARF:/workspace \
+    --nv "./${SIF_FILE}" \
+    bash -lc '
+        set -euo pipefail
+
+        cd /workspace
+
+        echo "Inside container"
+        echo "Working directory: $(pwd)"
+        echo "Python: $(command -v python || true)"
+        echo "Python version: $(python --version 2>&1 || true)"
+        echo "Initial PATH: ${PATH}"
+
+        if ! command -v uv >/dev/null 2>&1; then
+            echo "uv not found in container. Installing uv into user environment."
+
+            if command -v python >/dev/null 2>&1; then
+                python -m pip install --user --no-cache-dir uv
+            elif command -v python3 >/dev/null 2>&1; then
+                python3 -m pip install --user --no-cache-dir uv
+            else
+                echo "Error: neither python nor python3 is available to install uv" >&2
+                exit 1
+            fi
+
+            export PATH="${HOME}/.local/bin:${PATH}"
+        fi
+
+        if ! command -v uv >/dev/null 2>&1; then
+            echo "Error: uv installation failed or uv is still not on PATH" >&2
+            echo "PATH: ${PATH}" >&2
+            exit 1
+        fi
+
+        echo "uv found at: $(command -v uv)"
+        echo "uv version: $(uv --version)"
+
+        echo "Running uv sync"
+        uv sync --locked --extra post --no-dev
+
+        echo "Starting training"
+
+        if [ -z "${HPARAMS}" ]; then
+            .venv/bin/python src/train.py \
+                experiment="${EXPERIMENT}" \
+                data.cfg.cv_fold="${CV}" \
+                ${PARAMS}
+        else
+            .venv/bin/python src/train.py \
+                hparams_search="${HPARAMS}" \
+                experiment="${EXPERIMENT}" \
+                data.cfg.cv_fold="${CV}" \
+                ${PARAMS}
+        fi
+    '
+
+train_status=$?
+
+if [ ${train_status} -ne 0 ]; then
+    fail "Training failed with exit code ${train_status}"
+fi
+
+log_section "Finished"
 echo "Training finished"
+echo "Finished at: $(date -Is)"
