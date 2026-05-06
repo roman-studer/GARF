@@ -192,7 +192,7 @@ echo "Starting preprocessing pipe"
 SINGULARITYENV_LC_ALL=C.UTF-8 \
 SINGULARITYENV_LANG=C.UTF-8 \
 singularity exec --bind /lib:/host_lib --bind /lib64:/host_lib64 --env LD_LIBRARY_PATH=/host_lib:/host_lib64:$LD_LIBRARY_PATH \
--B /cluster/group/wristfractures/wristfracture:/workspace \
+-B /cluster/group/wristfractures/GARF:/workspace \
 --nv ./${SIF_FILE} \
 bash -c "cd /workspace && python3 -m pip install -r requirements.txt && \
 if [ -z "$hparams" ]
