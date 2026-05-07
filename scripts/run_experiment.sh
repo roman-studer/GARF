@@ -269,12 +269,12 @@ singularity exec \
         echo "Starting training"
 
         if [ -z "${HPARAMS}" ]; then
-            .venv/bin/python src/train.py \
+            .venv/bin/python train.py \
                 experiment="${EXPERIMENT}" \
                 data.cfg.cv_fold="${CV}" \
                 ${PARAMS}
         else
-            .venv/bin/python src/train.py \
+            .venv/bin/python train.py \
                 hparams_search="${HPARAMS}" \
                 experiment="${EXPERIMENT}" \
                 data.cfg.cv_fold="${CV}" \
