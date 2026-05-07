@@ -40,7 +40,30 @@ def main(cfg: DictConfig):
         cfg.get("trainer"), callbacks=callbacks, logger=loggers
     )
 
-    trainer.test(model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"), weights_only=False)
+    ckpt_path = cfg.get("ckpt_path")
+    base_ckpt_path = cfg.get("base_ckpt_path")
+
+    if ckpt_path is not None:
+        checkpoint = torch.load(
+            ckpt_path,
+            map_location="cpu",
+            weights_only=False,
+        )
+        if "lora_config" in checkpoint:
+            if not base_ckpt_path:
+                raise ValueError(
+                    "LoRA evaluation requires `base_ckpt_path` to point to the full base checkpoint."
+                )
+            base_state_dict = torch.load(
+                base_ckpt_path,
+                map_location="cpu",
+                weights_only=False,
+            )["state_dict"]
+            model.load_state_dict(base_state_dict)
+            model.enable_lora(ckpt_path)
+            ckpt_path = None
+
+    trainer.test(model, datamodule=datamodule, ckpt_path=ckpt_path, weights_only=False)
 
     print("Time taken: ", timer.time_elapsed("test"))
 

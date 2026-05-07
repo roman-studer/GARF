@@ -19,3 +19,4 @@ tags: ["dev"]
 seed: 1116
 
 ckpt_path: 
+base_ckpt_path: null
