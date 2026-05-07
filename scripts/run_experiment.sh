@@ -12,7 +12,7 @@ set -o pipefail
 hparams=""
 experiment=""
 params=""
-cv=0
+cv=""
 
 GITLAB_REGISTRY="cr.gitlab.fhnw.ch/i4ds/wristfracture:latest"
 SIF_FILE="wristfracture_latest.sif"
@@ -52,10 +52,17 @@ do
         p) params=${OPTARG};;
         c) cv=${OPTARG};;
         *)
-            fail "Invalid option. Usage: sbatch $0 -e EXPERIMENT [-h HPARAMS] [-p PARAMS] [-c CV]"
+            fail "Invalid option. Usage: sbatch $0 -e EXPERIMENT [-h HPARAMS] [-p PARAMS]"
             ;;
     esac
 done
+
+experiment="${experiment%.yaml}"
+experiment="${experiment%.yml}"
+
+if [ -z "${experiment}" ]; then
+    fail "Experiment is required. Usage: sbatch $0 -e EXPERIMENT [-h HPARAMS] [-p PARAMS]"
+fi
 
 log_section "Job context"
 echo "Host: $(hostname)"
@@ -64,7 +71,11 @@ echo "Started at: $(date -Is)"
 echo "Experiment: ${experiment}"
 echo "Hparams: ${hparams}"
 echo "Params: ${params}"
-echo "CV fold: ${cv}"
+echo "CV fold: ${cv:-not set}"
+
+if [ -n "${cv}" ]; then
+    fail "The current data config has no CV fold key. Omit -c, or pass a valid Hydra override through -p."
+fi
 
 require_cmd git
 require_cmd singularity
@@ -263,6 +274,8 @@ singularity exec \
         echo "uv found at: $(command -v uv)"
         echo "uv version: $(uv --version)"
 
+        export HYDRA_FULL_ERROR=1
+
         echo "Running uv sync"
         uv sync --locked --extra post --no-dev
 
@@ -271,13 +284,11 @@ singularity exec \
         if [ -z "${HPARAMS}" ]; then
             .venv/bin/python train.py \
                 experiment="${EXPERIMENT}" \
-                data.cfg.cv_fold="${CV}" \
                 ${PARAMS}
         else
             .venv/bin/python train.py \
                 hparams_search="${HPARAMS}" \
                 experiment="${EXPERIMENT}" \
-                data.cfg.cv_fold="${CV}" \
                 ${PARAMS}
         fi
     '
