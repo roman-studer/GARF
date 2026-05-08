@@ -15,7 +15,7 @@ data:
 
 trainer:
   num_nodes: 1
-  max_epochs: 20
+  max_epochs: 500
   check_val_every_n_epoch: 10
   log_every_n_steps: 1
   accumulate_grad_batches: 2
